@@ -444,7 +444,7 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                 'mi35x_sglang_deepseek_r1_0528_disaggregated.json',
                 'mi35x_sglang_deepseek_r1_0528_distributed.json',
                 'mi35x_sglang_deepseek_r1_0528_single.json',
-                'mi35x_sglang_deepseek_v41_flash_distributed.json',
+                'mi35x_sglang_deepseek_v4_flash_distributed.json',
                 'mi35x_sglang_llama_70b_disaggregated.json',
                 'mi35x_sglang_llama_70b_distributed.json',
                 'mi35x_sglang_llama_70b_single.json',
@@ -455,7 +455,7 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                 'mi3xx_sglang_deepseek_r1_0528_distributed.json',
                 'mi3xx_sglang_deepseek_r1_0528_mori_disaggregated.json',
                 'mi3xx_sglang_deepseek_r1_0528_single.json',
-                'mi3xx_sglang_deepseek_v41_flash_distributed.json',
+                'mi3xx_sglang_deepseek_v4_flash_distributed.json',
                 'mi3xx_sglang_llama_70b_disaggregated.json',
                 'mi3xx_sglang_llama_70b_distributed.json',
                 'mi3xx_sglang_llama_70b_mori_disaggregated.json',
@@ -674,9 +674,9 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
         self.assertEqual(variant.inference['benchmark_serv_node'], 'node-a')
         self.assertEqual(variant.inference['server_node_list'], ['node-a', 'node-b'])
 
-    def _load_v41_flash(self, prefix='mi35x', drop=(), **server_overrides):
+    def _load_v4_flash(self, prefix='mi35x', drop=(), **server_overrides):
         config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
-        config_path = config_dir / f'{prefix}_sglang_deepseek_v41_flash_distributed.json'
+        config_path = config_dir / f'{prefix}_sglang_deepseek_v4_flash_distributed.json'
         raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
         raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
         raw['server_params'].update(server_overrides)
@@ -688,10 +688,10 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
             temp_config.write_text(json.dumps(raw), encoding='utf-8')
             return loader.load_variant(str(temp_config), {'username': 'test'})
 
-    def test_v41_flash_config_runs_wide_ep_on_the_distributed_topology(self):
+    def test_v4_flash_config_runs_wide_ep_on_the_distributed_topology(self):
         for prefix in ('mi35x', 'mi3xx'):
             with self.subTest(prefix):
-                variant = self._load_v41_flash(prefix)
+                variant = self._load_v4_flash(prefix)
                 self.assertEqual(variant.topology, 'distributed')
                 self.assertTrue(sglang_common.wide_ep_enabled(variant.inference))
                 self.assertEqual(variant.benchmark_params['expert_parallelism'], '16')
@@ -699,43 +699,43 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                 self.assertIn('--moe-a2a-backend mori', variant.benchmark_params['add_flags'])
 
     def test_wide_ep_flag_accepts_a_string(self):
-        variant = self._load_v41_flash(enable_wideEP='true')
+        variant = self._load_v4_flash(enable_wideEP='true')
         self.assertTrue(sglang_common.wide_ep_enabled(variant.inference))
 
     def test_missing_or_false_flag_loads_as_plain_distributed(self):
         for kwargs in ({'enable_wideEP': 'false'}, {'enable_wideEP': False}, {'drop': ('enable_wideEP',)}):
             with self.subTest(kwargs):
-                variant = self._load_v41_flash(**kwargs)
+                variant = self._load_v4_flash(**kwargs)
                 self.assertEqual(variant.topology, 'distributed')
                 self.assertFalse(sglang_common.wide_ep_enabled(variant.inference))
 
     def test_false_flag_skips_the_wide_ep_layout_checks(self):
-        variant = self._load_v41_flash(enable_wideEP='false', expert_parallelism='8', attn_data_parallelism='4')
+        variant = self._load_v4_flash(enable_wideEP='false', expert_parallelism='8', attn_data_parallelism='4')
         self.assertFalse(sglang_common.wide_ep_enabled(variant.inference))
 
     def test_wide_ep_rejects_an_invalid_flag_value(self):
         with self.assertRaisesRegex(ValueError, 'enable_wideEP must be true or false'):
-            self._load_v41_flash(enable_wideEP='yes')
+            self._load_v4_flash(enable_wideEP='yes')
 
     def test_wide_ep_requires_the_distributed_topology(self):
         with self.assertRaisesRegex(ValueError, 'only supported by the distributed topology'):
-            self._load_v41_flash(nnodes='1', tensor_parallelism='8', expert_parallelism='8', attn_data_parallelism='8')
+            self._load_v4_flash(nnodes='1', tensor_parallelism='8', expert_parallelism='8', attn_data_parallelism='8')
 
     def test_wide_ep_rejects_expert_size_that_differs_from_tensor_parallel(self):
         with self.assertRaisesRegex(ValueError, 'expert_parallelism == tensor_parallelism'):
-            self._load_v41_flash(expert_parallelism='8')
+            self._load_v4_flash(expert_parallelism='8')
 
     def test_wide_ep_rejects_tensor_parallel_that_does_not_split_across_nnodes(self):
         with self.assertRaisesRegex(ValueError, 'split evenly across nnodes'):
-            self._load_v41_flash(nnodes='3')
+            self._load_v4_flash(nnodes='3')
 
     def test_wide_ep_rejects_add_flags_that_override_the_layout(self):
         with self.assertRaisesRegex(ValueError, '--ep-size'):
-            self._load_v41_flash(add_flags=['--moe-a2a-backend mori', '--ep-size 8'])
+            self._load_v4_flash(add_flags=['--moe-a2a-backend mori', '--ep-size 8'])
 
     def test_wide_ep_rejects_unknown_deepep_mode(self):
         with self.assertRaisesRegex(ValueError, 'deepep_mode in'):
-            self._load_v41_flash(deepep_mode='fast')
+            self._load_v4_flash(deepep_mode='fast')
 
     def test_distributed_fails_when_cluster_is_smaller_than_nnodes(self):
         config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
