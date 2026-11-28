@@ -70,7 +70,9 @@
       "context_length": "163840",
       "chunked_prefill_size": "8192",
       "max_prefill_tokens": "8192",
-      "add_flags": ["--attention-backend aiter", "--disable-custom-all-reduce", "--disable-overlap-schedule"]
+      "_comment": "If --disaggregation-transfer-backend mori is removed, it defaults to moooncake",
+      "add_flags": ["--attention-backend aiter", "--disaggregation-transfer-backend mori"]
+      
     },
     "benchmark_params": {
       "backend": "sglang",
