@@ -421,6 +421,7 @@ WIDE_EP_DEEPEP_MODES = ("normal", "low_latency", "auto")
 WIDE_EP_A2A_FLAG = "--moe-a2a-backend"
 WIDE_EP_MORI_BACKEND = "mori"
 # The launcher derives these from the layout fields; an add_flags copy would override the validated layout.
+# --model-path is listed because it sets the same server argument as the launcher's --model.
 WIDE_EP_LAUNCHER_FLAGS = (
     "--model",
     "--model-path",
@@ -530,11 +531,15 @@ def validate_wide_ep_layout(params, nnodes=None):
             f"so attention stays data-parallel, got attn_data_parallelism={attn_dp} expert_parallelism={ep}"
         )
     nnodes = params.get("nnodes") if nnodes is None else nnodes
-    if nnodes not in (None, "") and tp % int(nnodes):
-        raise ValueError(
-            f"{prefix} requires tensor_parallelism to split evenly across nnodes, "
-            f"got tensor_parallelism={tp} nnodes={int(nnodes)}"
-        )
+    if nnodes not in (None, ""):
+        nnodes = int(nnodes)
+        if nnodes < 2:
+            raise ValueError(f"{prefix} requires nnodes >= 2, got {nnodes}")
+        if tp % nnodes:
+            raise ValueError(
+                f"{prefix} requires tensor_parallelism to split evenly across nnodes, "
+                f"got tensor_parallelism={tp} nnodes={nnodes}"
+            )
     deepep_mode = params.get("deepep_mode")
     if deepep_mode not in (None, "") and str(deepep_mode) not in WIDE_EP_DEEPEP_MODES:
         raise ValueError(f"{prefix} needs deepep_mode in {', '.join(WIDE_EP_DEEPEP_MODES)}, got {deepep_mode!r}")

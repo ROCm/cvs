@@ -1334,6 +1334,11 @@ class TestValidateWideEPLayout(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'tensor_parallelism=16 nnodes=3'):
             sglang_common.validate_wide_ep_layout(dict(self._VALID), nnodes=3)
 
+    def test_rejects_fewer_than_two_nnodes(self):
+        for nnodes in (0, 1, '0', '1'):
+            with self.subTest(nnodes=nnodes), self.assertRaisesRegex(ValueError, 'nnodes >= 2'):
+                sglang_common.validate_wide_ep_layout(dict(self._VALID), nnodes=nnodes)
+
     def test_reads_nnodes_from_params_when_not_passed(self):
         with self.assertRaisesRegex(ValueError, 'split evenly across nnodes'):
             sglang_common.validate_wide_ep_layout(dict(self._VALID, nnodes='3'))
@@ -1346,7 +1351,14 @@ class TestValidateWideEPLayout(unittest.TestCase):
             sglang_common.validate_wide_ep_layout(dict(self._VALID, deepep_mode=mode))
 
     def test_rejects_add_flags_that_repeat_launcher_owned_flags(self):
-        for flag in ('--ep-size 8', '--tp-size=8', '--enable-dp-attention', '--dp-size 8', '--nnodes 4'):
+        for flag in (
+            '--ep-size 8',
+            '--tp-size=8',
+            '--enable-dp-attention',
+            '--dp-size 8',
+            '--nnodes 4',
+            '--model-path /root/models/other',
+        ):
             with self.subTest(flag=flag), self.assertRaisesRegex(ValueError, 'add_flags may not set'):
                 sglang_common.validate_wide_ep_layout(dict(self._VALID, add_flags=['--moe-a2a-backend mori', flag]))
 
